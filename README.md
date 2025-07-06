@@ -5,17 +5,6 @@
 
 ChronoVault is the first autonomous DCA platform leveraging Massa's unique self-scheduling smart contracts. Unlike traditional DCA solutions that rely on external keeper bots, ChronoVault contracts execute themselves on-chain, providing true decentralization and eliminating single points of failure.
 
-## Quick Start
-
-```bash
-# Clone the repository
-git clone https://github.com/juliusjulyp/chronovault.git
-cd chronovault
-
-# Install and deploy
-npm install
-npm run deploy
-```
 
 ## Project Structure
 
@@ -37,7 +26,7 @@ chronovault/
 - **Predictable Scheduling** - On-chain scheduler eliminates timing failures
 
 **🎯 Market Opportunity:**
-- First autonomous DCA platform on any blockchain
+- First autonomous DCA platform.
 - Leverages Massa's unique autonomous smart contract capabilities
 - Eliminates  keeper bot industry dependency
 
@@ -49,11 +38,8 @@ chronovault/
 **Status:** ✅ Complete | **Goal:** Prove DCA execution works on Massa
 
 - **Manual Execution MVP** - Smart contract with vault system and DCA logic
-- **Testnet Deployment** - Fully functional on Massa testnet
 - **Demo Interface** - CLI tools for interaction and testing
 - **Foundation Architecture** - Scalable contract design for future waves
-
-**▶️ You're in Wave 1 Now!**
 
 ### 🌊 Wave 2: Autonomous Execution
 **Status:** 🔄 In Planning | **Goal:** True autonomous DCA with Massa's scheduler
@@ -87,9 +73,6 @@ chronovault/
 - **Community Governance** - Autonomous execution of community decisions
 - **Production Excellence** - Handle thousands of autonomous DCA orders
 
-## Contributing
-
-We welcome contributions! Please see the [Development](#development) section below for technical details.
 
 ## License
 

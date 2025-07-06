@@ -7,31 +7,23 @@ import {
   JsonRpcProvider,
 } from '@massalabs/massa-web3';
 
-// Initialize connection variables
-let contractAddress: string;
-let account: Account;
-let provider: JsonRpcProvider;
-
-// Initialize connection
-async function initializeConnection(): Promise<void> {
-  // Load environment variables
-  contractAddress = process.env.DCA_CONTRACT_ADDRESS!;
-  if (!contractAddress) {
-    console.error('❌ DCA_CONTRACT_ADDRESS not found in .env file');
-    console.log('💡 Deploy the contract first with: npm run deploy');
-    process.exit(1);
-  }
-
-  account = await Account.fromEnv();
-  provider = JsonRpcProvider.buildnet(account);
-
-  console.log('🔗 ChronoVault DCA Contract Interaction');
-  console.log('📄 Contract Address:', contractAddress);
-  console.log('👤 User Address:', account.address.toString());
+// Load environment variables
+const contractAddress = process.env.DCA_CONTRACT_ADDRESS || '';
+if (!contractAddress) {
+  console.error('❌ DCA_CONTRACT_ADDRESS not found in .env file');
+  console.log('💡 Deploy the contract first with: npm run deploy');
+  process.exit(1);
 }
 
+const account = await Account.fromEnv();
+const provider = JsonRpcProvider.buildnet(account);
+
+console.log('🔗 ChronoVault DCA Contract Interaction');
+console.log('📄 Contract Address:', contractAddress);
+console.log('👤 User Address:', account.address.toString());
+
 // Helper function to call contract
-async function callContract(functionName: string, args: Args, coins: number = 0): Promise<any> {
+async function callContract(functionName: string, args: Args, coins = 0): Promise<any> {
   const contract = new SmartContract(provider, contractAddress);
   
   try {
@@ -42,9 +34,8 @@ async function callContract(functionName: string, args: Args, coins: number = 0)
     );
     
     console.log(`✅ ${functionName} completed`);
-    if (result.returnValue) {
-      console.log('📤 Return value:', result.returnValue);
-    }
+    // Note: Operation type doesn't have returnValue property
+    // Use events or other methods to get return data
     
     // Get events from this operation
     const events = await provider.getEvents({
@@ -69,7 +60,7 @@ async function readContract(functionName: string, args: Args): Promise<string> {
   
   try {
     const result = await contract.read(functionName, args);
-    return result;
+    return result.toString();
   } catch (error) {
     console.error(`❌ ${functionName} read failed:`, error);
     throw error;
@@ -107,7 +98,7 @@ export async function createDCAStrategy(
   amount: number,
   frequencyHours: number,
   targetToken: string,
-  hoursFromNow: number = 1
+  hoursFromNow = 1
 ): Promise<string> {
   console.log(`\n🎯 Creating DCA strategy...`);
   console.log(`• Amount: ${amount} MAS`);
@@ -119,13 +110,14 @@ export async function createDCAStrategy(
   const nextExecutionMs = Date.now() + (hoursFromNow * 60 * 60 * 1000);
   
   const args = new Args()
-    .addU64(BigInt(amount * 1000000)) // Convert to microMAS
+    .addU64(BigInt(Math.floor(amount * 1000000))) // Convert to microMAS
     .addU64(BigInt(frequencyMs))
     .addString(targetToken)
     .addU64(BigInt(nextExecutionMs));
   
   const result = await callContract('createStrategy', args);
-  return result.returnValue;
+  // Return operation ID or use events to get strategy ID
+  return result.id || 'strategy_created';
 }
 
 // Execute DCA strategy
@@ -191,78 +183,71 @@ export async function runDemo(): Promise<void> {
 }
 
 // CLI interface
-async function main(): Promise<void> {
-  await initializeConnection();
-  
-  const command = process.argv[2];
-  const args = process.argv.slice(3);
+const command = process.argv[2];
+const args = process.argv.slice(3);
 
-  switch (command) {
-    case 'demo':
-      await runDemo();
-      break;
-      
-    case 'deposit':
-      if (!args[0]) {
-        console.error('Usage: npm run interact deposit <amount>');
-        process.exit(1);
-      }
-      await depositToVault(parseFloat(args[0]));
-      break;
-      
-    case 'balance':
-      await checkVaultBalance();
-      break;
-      
-    case 'price':
-      if (!args[0] || !args[1]) {
-        console.error('Usage: npm run interact price <token> <price>');
-        process.exit(1);
-      }
-      await updateTokenPrice(args[0], parseFloat(args[1]));
-      break;
-      
-    case 'create':
-      if (!args[0] || !args[1] || !args[2]) {
-        console.error('Usage: npm run interact create <amount> <frequency_hours> <target_token> [hours_from_now]');
-        process.exit(1);
-      }
-      await createDCAStrategy(
-        parseFloat(args[0]),
-        parseFloat(args[1]),
-        args[2],
-        args[3] ? parseFloat(args[3]) : 1
-      );
-      break;
-      
-    case 'execute':
-      if (!args[0]) {
-        console.error('Usage: npm run interact execute <strategy_id>');
-        process.exit(1);
-      }
-      await executeDCA(args[0]);
-      break;
-      
-    case 'info':
-      if (!args[0]) {
-        console.error('Usage: npm run interact info <strategy_id>');
-        process.exit(1);
-      }
-      await getStrategyInfo(args[0]);
-      break;
-      
-    default:
-      console.log('🔧 ChronoVault DCA Interaction Commands:');
-      console.log('• npm run interact demo                                   - Run full demo');
-      console.log('• npm run interact deposit <amount>                       - Deposit MAS to vault');
-      console.log('• npm run interact balance                                - Check vault balance');
-      console.log('• npm run interact price <token> <price>                  - Update token price (admin)');
-      console.log('• npm run interact create <amount> <freq_hours> <token>   - Create DCA strategy');
-      console.log('• npm run interact execute <strategy_id>                  - Execute DCA strategy');
-      console.log('• npm run interact info <strategy_id>                     - Get strategy info');
-      break;
-  }
+switch (command) {
+  case 'demo':
+    await runDemo();
+    break;
+    
+  case 'deposit':
+    if (!args[0]) {
+      console.error('Usage: npm run interact deposit <amount>');
+      process.exit(1);
+    }
+    await depositToVault(parseFloat(args[0]));
+    break;
+    
+  case 'balance':
+    await checkVaultBalance();
+    break;
+    
+  case 'price':
+    if (!args[0] || !args[1]) {
+      console.error('Usage: npm run interact price <token> <price>');
+      process.exit(1);
+    }
+    await updateTokenPrice(args[0], parseFloat(args[1]));
+    break;
+    
+  case 'create':
+    if (!args[0] || !args[1] || !args[2]) {
+      console.error('Usage: npm run interact create <amount> <frequency_hours> <target_token> [hours_from_now]');
+      process.exit(1);
+    }
+    await createDCAStrategy(
+      parseFloat(args[0]),
+      parseFloat(args[1]),
+      args[2],
+      args[3] ? parseFloat(args[3]) : 1
+    );
+    break;
+    
+  case 'execute':
+    if (!args[0]) {
+      console.error('Usage: npm run interact execute <strategy_id>');
+      process.exit(1);
+    }
+    await executeDCA(args[0]);
+    break;
+    
+  case 'info':
+    if (!args[0]) {
+      console.error('Usage: npm run interact info <strategy_id>');
+      process.exit(1);
+    }
+    await getStrategyInfo(args[0]);
+    break;
+    
+  default:
+    console.log('🔧 ChronoVault DCA Interaction Commands:');
+    console.log('• npm run interact demo                                   - Run full demo');
+    console.log('• npm run interact deposit <amount>                       - Deposit MAS to vault');
+    console.log('• npm run interact balance                                - Check vault balance');
+    console.log('• npm run interact price <token> <price>                  - Update token price (admin)');
+    console.log('• npm run interact create <amount> <freq_hours> <token>   - Create DCA strategy');
+    console.log('• npm run interact execute <strategy_id>                  - Execute DCA strategy');
+    console.log('• npm run interact info <strategy_id>                     - Get strategy info');
+    break;
 }
-
-// Run main function
-main().catch(console.error);
