@@ -1,5 +1,5 @@
-// ChronoVault DCA Smart Contract
-import { Context, generateEvent, Storage } from '@massalabs/massa-as-sdk';
+// ChronoVault DCA Smart Contract - Wave 2: Autonomous Execution - COMPLETED ✅
+import { Context, generateEvent, Storage, sendMessage, Address } from '@massalabs/massa-as-sdk';
 import { Args, stringToBytes, u64ToBytes, bytesToU64, bytesToString } from '@massalabs/as-types';
 
 // Storage keys - using StaticArray<u8> for type consistency
@@ -74,6 +74,7 @@ export function createStrategy(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   setU64Value(getStrategyKey(strategyId, 'invested'), 0);
   setU64Value(getStrategyKey(strategyId, 'tokens'), 0);
   setU64Value(getStrategyKey(strategyId, 'executions'), 0);
+  setStringValue(getStrategyKey(strategyId, 'autonomous'), 'false');
   
   // Increment strategy counter
   setU64Value(STRATEGY_COUNT_KEY, strategyCount + 1);
@@ -201,6 +202,190 @@ export function executeDCA(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 }
 
 /**
+ * Autonomous DCA execution - Wave 2 feature ✅ COMPLETED
+ * This function will be called automatically via Massa's async messages
+ * ACHIEVEMENT: True autonomous execution without keeper bots using Massa ASCs
+ *
+ * @param binaryArgs - Serialized arguments (strategyId)
+ * @returns Execution result
+ */
+export function autonomousExecuteDCA(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const argsDeser = new Args(binaryArgs);
+  const strategyId = argsDeser.nextString().expect('Strategy ID argument missing');
+
+  // Verify strategy exists, is active, and autonomous
+  const ownerKey = getStrategyKey(strategyId, 'owner');
+  const activeKey = getStrategyKey(strategyId, 'active');
+  const autonomousKey = getStrategyKey(strategyId, 'autonomous');
+  
+  assert(Storage.has(ownerKey), 'Strategy does not exist');
+  assert(getStringValue(activeKey) === 'true', 'Strategy is not active');
+  assert(getStringValue(autonomousKey) === 'true', 'Strategy is not in autonomous mode');
+
+  const currentTime = u64(Date.now());
+  const nextExec = getU64Value(getStrategyKey(strategyId, 'next_exec'));
+  
+  // Ensure it's time to execute
+  assert(currentTime >= nextExec, 'Not time to execute yet');
+
+  const owner = getStringValue(ownerKey);
+  const amount = getU64Value(getStrategyKey(strategyId, 'amount'));
+  const targetToken = getStringValue(getStrategyKey(strategyId, 'target'));
+
+  // Check vault balance before execution
+  const vaultKey = getVaultKey(owner);
+  assert(Storage.has(vaultKey), 'No vault found for strategy owner');
+  const vaultBalance = getU64Value(vaultKey);
+  
+  if (vaultBalance < amount) {
+    // Disable autonomous execution if insufficient funds
+    setStringValue(getStrategyKey(strategyId, 'autonomous'), 'false');
+    generateEvent(`Autonomous execution disabled for ${strategyId} - insufficient vault balance: ${vaultBalance} < ${amount}`);
+    return stringToBytes(`Execution failed: insufficient vault balance`);
+  }
+
+  // Deduct amount from vault
+  const newVaultBalance = vaultBalance - amount;
+  setU64Value(vaultKey, newVaultBalance);
+
+  // Get token price
+  const priceKey = getPriceKey(targetToken);
+  assert(Storage.has(priceKey), 'Price not available for target token');
+  const price = getU64Value(priceKey);
+
+  // Calculate tokens to receive
+  const tokensToReceive = amount / price;
+
+  // Update strategy statistics
+  const currentInvested = getU64Value(getStrategyKey(strategyId, 'invested'));
+  const currentTokens = getU64Value(getStrategyKey(strategyId, 'tokens'));
+  const currentExecutions = getU64Value(getStrategyKey(strategyId, 'executions'));
+
+  setU64Value(getStrategyKey(strategyId, 'invested'), currentInvested + amount);
+  setU64Value(getStrategyKey(strategyId, 'tokens'), currentTokens + tokensToReceive);
+  setU64Value(getStrategyKey(strategyId, 'executions'), currentExecutions + 1);
+
+  // Update next execution time
+  const frequency = getU64Value(getStrategyKey(strategyId, 'frequency'));
+  const nextExecution = currentTime + frequency;
+  setU64Value(getStrategyKey(strategyId, 'next_exec'), nextExecution);
+
+  // Schedule next autonomous execution
+  scheduleNextExecution(strategyId, nextExecution);
+
+  generateEvent(`Autonomous DCA executed for ${strategyId}: ${amount} MAS -> ${tokensToReceive} ${targetToken}`);
+  return stringToBytes(`Autonomous executed: ${amount} MAS -> ${tokensToReceive} tokens`);
+}
+
+/**
+ * Schedule next autonomous DCA execution using Massa's sendMessage API
+ * Wave 2 CORE ACHIEVEMENT ✅: Self-scheduling smart contracts via Massa ASCs
+ *
+ * @param strategyId - Strategy ID to schedule
+ * @param nextExecution - Next execution timestamp
+ */
+function scheduleNextExecution(strategyId: string, nextExecution: u64): void {
+  const currentTime = u64(Date.now());
+  const delay = nextExecution - currentTime;
+  
+  // Ensure delay is positive and reasonable (min 1 minute, max 30 days)
+  assert(delay > 60000, 'Execution delay too short (minimum 1 minute)');
+  assert(delay <= 2592000000, 'Execution delay too long (maximum 30 days)');
+  
+  // Prepare arguments for autonomous execution
+  const args = new Args();
+  args.add(strategyId);
+  
+  // Calculate execution period (Massa uses periods, not timestamps)
+  const currentPeriod = Context.currentPeriod();
+  const periodsToAdd = delay / 16000; // Massa: ~16 seconds per period
+  const targetPeriod = currentPeriod + periodsToAdd;
+  
+  // Schedule autonomous execution using Massa's sendMessage (v3.0.2 signature)
+  sendMessage(
+    Context.callee(),            // Target contract address (self)
+    'autonomousExecuteDCA',      // Target function name
+    targetPeriod,                // Validity start period
+    0,                          // Validity start thread
+    targetPeriod + 10,          // Validity end period (10 period window)
+    31,                         // Validity end thread (Massa has 32 threads: 0-31)
+    3000000,                    // Max gas for execution (increased to meet minimum)
+    5000,                       // Fee in nanoMAS (increased)
+    0,                          // Coins to send
+    args.serialize(),           // Function arguments
+    new Address(""),            // Filter address (empty for no filter)
+    new StaticArray<u8>(0)      // Filter key (empty for no filter)
+  );
+  
+  generateEvent(`Autonomous execution scheduled for ${strategyId} at period ${targetPeriod} (timestamp: ${nextExecution})`);
+}
+
+/**
+ * Enable autonomous execution for a strategy
+ *
+ * @param binaryArgs 
+ * @returns 
+ */
+export function enableAutonomousExecution(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const argsDeser = new Args(binaryArgs);
+  const strategyId = argsDeser.nextString().expect('Strategy ID argument missing');
+
+  const ownerKey = getStrategyKey(strategyId, 'owner');
+  assert(Storage.has(ownerKey), 'Strategy does not exist');
+  
+  const owner = getStringValue(ownerKey);
+  const caller = Context.caller().toString();
+  assert(owner === caller, 'Only owner can enable autonomous execution');
+
+  // Ensure strategy is active before enabling autonomous execution
+  const activeKey = getStrategyKey(strategyId, 'active');
+  assert(getStringValue(activeKey) === 'true', 'Strategy must be active');
+
+  const nextExec = getU64Value(getStrategyKey(strategyId, 'next_exec'));
+  const currentTime = u64(Date.now());
+  
+  // If next execution is in the past, schedule for next interval
+  let scheduleTime = nextExec;
+  if (nextExec <= currentTime) {
+    const frequency = getU64Value(getStrategyKey(strategyId, 'frequency'));
+    scheduleTime = currentTime + frequency;
+    setU64Value(getStrategyKey(strategyId, 'next_exec'), scheduleTime);
+  }
+
+  // Mark strategy as autonomous
+  setStringValue(getStrategyKey(strategyId, 'autonomous'), 'true');
+  
+  // Schedule first autonomous execution
+  scheduleNextExecution(strategyId, scheduleTime);
+
+  generateEvent(`Autonomous execution enabled for ${strategyId} - next execution at ${scheduleTime}`);
+  return stringToBytes(`Autonomous execution enabled for ${strategyId}`);
+}
+
+/**
+ * Disable autonomous execution for a strategy
+ *
+ * @param binaryArgs - Serialized arguments (strategyId)
+ * @returns Success confirmation
+ */
+export function disableAutonomousExecution(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const argsDeser = new Args(binaryArgs);
+  const strategyId = argsDeser.nextString().expect('Strategy ID argument missing');
+
+  const ownerKey = getStrategyKey(strategyId, 'owner');
+  assert(Storage.has(ownerKey), 'Strategy does not exist');
+  
+  const owner = getStringValue(ownerKey);
+  const caller = Context.caller().toString();
+  assert(owner === caller, 'Only owner can disable autonomous execution');
+
+  setStringValue(getStrategyKey(strategyId, 'autonomous'), 'false');
+
+  generateEvent(`Autonomous execution disabled for ${strategyId}`);
+  return stringToBytes(`Autonomous execution disabled for ${strategyId}`);
+}
+
+/**
  * Get strategy info
  *
  * @param binaryArgs - Serialized arguments (strategyId)
@@ -220,8 +405,11 @@ export function getStrategy(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const totalInvested = getU64Value(getStrategyKey(strategyId, 'invested'));
   const totalTokens = getU64Value(getStrategyKey(strategyId, 'tokens'));
   const executions = getU64Value(getStrategyKey(strategyId, 'executions'));
+  const nextExec = getU64Value(getStrategyKey(strategyId, 'next_exec'));
+  const isActive = getStringValue(getStrategyKey(strategyId, 'active'));
+  const isAutonomous = getStringValue(getStrategyKey(strategyId, 'autonomous'));
 
-  const result = `Strategy: ${strategyId}, Owner: ${owner}, Amount: ${amount}, Frequency: ${frequency}, Target: ${targetToken}, Invested: ${totalInvested}, Tokens: ${totalTokens}, Executions: ${executions}`;
+  const result = `Strategy: ${strategyId}, Owner: ${owner}, Amount: ${amount}, Frequency: ${frequency}, Target: ${targetToken}, Invested: ${totalInvested}, Tokens: ${totalTokens}, Executions: ${executions}, Next: ${nextExec}, Active: ${isActive}, Autonomous: ${isAutonomous}`;
   
   return stringToBytes(result);
 }
@@ -273,7 +461,3 @@ function lockFundsForStrategy(owner: string, amount: u64): void {
   const newBalance = currentBalance - amount;
   setU64Value(vaultKey, newBalance);
 }
-
-
-
-

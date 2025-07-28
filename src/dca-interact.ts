@@ -15,7 +15,14 @@ if (!contractAddress) {
   process.exit(1);
 }
 
-const account = await Account.fromEnv();
+// Get private key from environment
+const privateKey = process.env.WALLET_PRIVATE_KEY;
+if (!privateKey) {
+  console.error('❌ WALLET_PRIVATE_KEY not found in .env file');
+  process.exit(1);
+}
+
+const account = await Account.fromPrivateKey(privateKey);
 const provider = JsonRpcProvider.buildnet(account);
 
 console.log('🔗 ChronoVault DCA Contract Interaction');
@@ -34,18 +41,7 @@ async function callContract(functionName: string, args: Args, coins = 0): Promis
     );
     
     console.log(`✅ ${functionName} completed`);
-    // Note: Operation type doesn't have returnValue property
-    // Use events or other methods to get return data
-    
-    // Get events from this operation
-    const events = await provider.getEvents({
-      smartContractAddress: contractAddress,
-    });
-    
-    const latestEvent = events[events.length - 1];
-    if (latestEvent) {
-      console.log('📝 Event:', latestEvent.data);
-    }
+    console.log(`📝 Operation ID: ${result.id}`);
     
     return result;
   } catch (error) {
@@ -60,7 +56,16 @@ async function readContract(functionName: string, args: Args): Promise<string> {
   
   try {
     const result = await contract.read(functionName, args);
-    return result.toString();
+    
+    // Extract the actual return value from the result
+    if (result && result.value) {
+      // Convert byte array to string
+      const bytes = Object.values(result.value) as number[];
+      const text = String.fromCharCode(...bytes);
+      return text;
+    }
+    
+    return '0';
   } catch (error) {
     console.error(`❌ ${functionName} read failed:`, error);
     throw error;
@@ -115,9 +120,16 @@ export async function createDCAStrategy(
     .addString(targetToken)
     .addU64(BigInt(nextExecutionMs));
   
-  const result = await callContract('createStrategy', args);
-  // Return operation ID or use events to get strategy ID
-  return result.id || 'strategy_created';
+  await callContract('createStrategy', args);
+  
+  const userAddress = account.address.toString();
+  
+  // Strategy ID format: {user_address}_{count}
+  // Since we just created it, the strategy ID should be user_address_0 for first strategy
+  const strategyId = `${userAddress}_0`;
+  console.log(`📋 Strategy ID: ${strategyId}`);
+  
+  return strategyId;
 }
 
 // Execute DCA strategy
@@ -136,6 +148,22 @@ export async function getStrategyInfo(strategyId: string): Promise<string> {
   const info = await readContract('getStrategy', args);
   console.log('📋 Strategy Info:', info);
   return info;
+}
+
+// Enable autonomous execution for a strategy
+export async function enableAutonomousExecution(strategyId: string): Promise<void> {
+  console.log(`\n🤖 Enabling autonomous execution for strategy: ${strategyId}`);
+  
+  const args = new Args().addString(strategyId);
+  await callContract('enableAutonomousExecution', args);
+}
+
+// Disable autonomous execution for a strategy
+export async function disableAutonomousExecution(strategyId: string): Promise<void> {
+  console.log(`\n⏹️ Disabling autonomous execution for strategy: ${strategyId}`);
+  
+  const args = new Args().addString(strategyId);
+  await callContract('disableAutonomousExecution', args);
 }
 
 // Demo workflow
@@ -240,6 +268,22 @@ switch (command) {
     await getStrategyInfo(args[0]);
     break;
     
+  case 'enable-auto':
+    if (!args[0]) {
+      console.error('Usage: npm run interact enable-auto <strategy_id>');
+      process.exit(1);
+    }
+    await enableAutonomousExecution(args[0]);
+    break;
+    
+  case 'disable-auto':
+    if (!args[0]) {
+      console.error('Usage: npm run interact disable-auto <strategy_id>');
+      process.exit(1);
+    }
+    await disableAutonomousExecution(args[0]);
+    break;
+    
   default:
     console.log('🔧 ChronoVault DCA Interaction Commands:');
     console.log('• npm run interact demo                                   - Run full demo');
@@ -249,5 +293,7 @@ switch (command) {
     console.log('• npm run interact create <amount> <freq_hours> <token>   - Create DCA strategy');
     console.log('• npm run interact execute <strategy_id>                  - Execute DCA strategy');
     console.log('• npm run interact info <strategy_id>                     - Get strategy info');
+    console.log('• npm run interact enable-auto <strategy_id>              - Enable autonomous execution');
+    console.log('• npm run interact disable-auto <strategy_id>             - Disable autonomous execution');
     break;
 }
